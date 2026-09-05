@@ -49,18 +49,6 @@ export default function JobDetailPage() {
         }
     }
 
-    async function handleDeduplicate() {
-        try {
-            const res = await apiFetch<{ removed: number }>(`/jobs/${jobId}/candidates/deduplicate`, {
-                method: "POST",
-            });
-            alert(`Cleaned up ${res.removed} duplicate candidates.`);
-            loadData();
-        } catch (err: any) {
-            alert(err.message || "Failed to remove duplicates");
-        }
-    }
-
     async function handleDeleteCandidate(candidateId: string) {
         if (!confirm("Are you sure you want to delete this candidate?")) return;
         try {
@@ -127,13 +115,8 @@ export default function JobDetailPage() {
             </Card>
 
             <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
+                <CardHeader>
                     <CardTitle>Candidates ({candidates.length})</CardTitle>
-                    {candidates.length > 1 && (
-                        <Button variant="outline" size="sm" onClick={handleDeduplicate}>
-                            Remove Duplicates
-                        </Button>
-                    )}
                 </CardHeader>
                 <CardContent>
                     <Table>
