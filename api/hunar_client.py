@@ -55,7 +55,7 @@ def _default_guardrails() -> dict:
     return {
         "allowed_days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
         "earliest_call_time": "09:00",
-        "last_call_time": "21:00",
+        "last_call_time": "23:55",
     }
 
  
