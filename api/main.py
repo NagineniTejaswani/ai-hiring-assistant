@@ -13,7 +13,12 @@ app = FastAPI(title="AI Hiring Assistant API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://web-kappa-sooty-71.vercel.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://web-kappa-sooty-71.vercel.app",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
