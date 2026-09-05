@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 class JobCreate(BaseModel):
     title: str
@@ -30,6 +30,22 @@ class CandidateOut(BaseModel):
     phone_number: str
     notes: Optional[str]
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ScreeningCallOut(BaseModel):
+    id: str
+    candidate_id: str
+    job_id: str
+    hunar_call_id: Optional[str]
+    status: str
+    lifecycle_status: str
+    result: Optional[dict[str, Any]]
+    recording_url: Optional[str]
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

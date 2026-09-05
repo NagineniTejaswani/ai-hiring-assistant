@@ -9,6 +9,12 @@ from config import settings
 import models, schemas
 from auth import verify_password, create_access_token, get_current_user
 from pydantic import BaseModel
+from hunar_client import create_call, HunarAPIError, create_bulk_calls
+import uuid
+import json
+from fastapi import Request, Response
+from webhook_utils import verify_hunar_webhook_signature
+
 
 app = FastAPI(title="AI Hiring Assistant API")
 
@@ -191,3 +197,197 @@ async def bulk_upload_candidates(job_id: str, file: UploadFile = File(...), db: 
         "skipped_duplicate": skipped_duplicate,
         "skipped_invalid": skipped_invalid,
     }
+
+
+@app.post("/jobs/{job_id}/candidates/{candidate_id}/screen", response_model=schemas.ScreeningCallOut)
+async def screen_candidate(
+    job_id: str,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    job = db.get(models.Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    candidate = db.get(models.Candidate, candidate_id)
+    if not candidate or candidate.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Candidate not found for this job")
+
+    # Create the DB row first — its id becomes our request_id, so incoming
+    # webhooks can be matched back to this exact record.
+    screening_call = models.ScreeningCall(
+        candidate_id=candidate.id,
+        job_id=job.id,
+        status="NOT_STARTED",
+        lifecycle_status="NOT_STARTED",
+    )
+    db.add(screening_call)
+    db.commit()
+    db.refresh(screening_call)
+
+    custom_data = {
+        "job_title": job.title,
+        "company_name": settings.company_name or "Hunar",
+        "job_description_summary": job.description if (job.description and job.description.strip()) else f"Role for {job.title}",
+        "must_have_criteria": job.must_have_criteria if (job.must_have_criteria and job.must_have_criteria.strip()) else "Relevant experience and skills for the role",
+    }
+
+    try:
+        hunar_response = await create_call(
+            callee_name=candidate.name,
+            mobile_number=candidate.phone_number,
+            custom_data=custom_data,
+            request_id=screening_call.id,
+        )
+    except HunarAPIError as e:
+        screening_call.status = "FAILED"
+        screening_call.lifecycle_status = "FAILED"
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Hunar call creation failed: {e.message}")
+
+    screening_call.hunar_call_id = hunar_response["id"]
+    screening_call.status = hunar_response.get("status", "NOT_STARTED")
+    db.commit()
+    db.refresh(screening_call)
+
+    return screening_call
+
+
+
+
+@app.post("/jobs/{job_id}/screen-all")
+async def screen_all_candidates(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    job = db.get(models.Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    candidates = db.query(models.Candidate).filter(models.Candidate.job_id == job_id).all()
+    if not candidates:
+        raise HTTPException(status_code=400, detail="No candidates to screen for this job")
+
+    # Skip candidates who already have a screening call in progress or completed
+    already_screened_ids = {
+        sc.candidate_id for sc in
+        db.query(models.ScreeningCall).filter(models.ScreeningCall.job_id == job_id).all()
+        if sc.lifecycle_status not in ("FAILED", "CANCELLED")
+    }
+    to_screen = [c for c in candidates if c.id not in already_screened_ids]
+
+    if not to_screen:
+        return {"message": "All candidates already screened or in progress", "created": 0}
+
+    # Create DB rows first, keyed by phone number for matching after Hunar responds
+    screening_calls_by_phone = {}
+    for candidate in to_screen:
+        sc = models.ScreeningCall(
+            candidate_id=candidate.id,
+            job_id=job.id,
+            status="NOT_STARTED",
+            lifecycle_status="NOT_STARTED",
+        )
+        db.add(sc)
+        screening_calls_by_phone[candidate.phone_number] = sc
+    db.commit()
+
+    custom_data = {
+        "job_title": job.title,
+        "company_name": settings.company_name or "Hunar",
+        "job_description_summary": job.description if (job.description and job.description.strip()) else f"Role for {job.title}",
+        "must_have_criteria": job.must_have_criteria if (job.must_have_criteria and job.must_have_criteria.strip()) else "Relevant experience and skills for the role",
+    }
+
+    recipients = [
+        {
+            "callee_name": c.name,
+            "mobile_number": c.phone_number,
+            "custom_data": custom_data,
+        }
+        for c in to_screen
+    ]
+
+    batch_request_id = f"batch-{job.id[:8]}-{uuid.uuid4().hex[:8]}"
+
+    try:
+        hunar_calls = await create_bulk_calls(batch_request_id=batch_request_id, recipients=recipients)
+    except HunarAPIError as e:
+        for sc in screening_calls_by_phone.values():
+            sc.status = "FAILED"
+            sc.lifecycle_status = "FAILED"
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Hunar bulk call creation failed: {e.message}")
+
+    # Match each returned call back to our row via mobile_number
+    updated = 0
+    for hunar_call in hunar_calls:
+        phone = hunar_call.get("mobile_number")
+        sc = screening_calls_by_phone.get(phone)
+        if sc:
+            sc.hunar_call_id = hunar_call["id"]
+            sc.status = hunar_call.get("status", "NOT_STARTED")
+            updated += 1
+
+    db.commit()
+    return {"message": f"Triggered {updated} screening calls", "created": updated, "requested": len(to_screen)}
+
+
+@app.post("/webhooks/hunar")
+async def hunar_webhook(request: Request, db: Session = Depends(get_db)):
+    raw_body = await request.body()
+
+    verified = verify_hunar_webhook_signature(
+        signature_header=request.headers.get("X-Hunar-Signature"),
+        timestamp_header=request.headers.get("X-Hunar-Timestamp"),
+        request_body=raw_body,
+        trusted_api_keys=[settings.hunar_api_key],
+    )
+    if not verified:
+        return Response(status_code=401)
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return Response(status_code=400)
+
+    event_type = payload.get("event_type")
+    request_id = payload.get("request_id")
+    call_id = payload.get("call_id")
+
+    # Match back to our row: request_id (our screening_call.id) is primary key,
+    # hunar_call_id is a fallback in case request_id wasn't preserved somehow.
+    screening_call = None
+    if request_id:
+        screening_call = db.get(models.ScreeningCall, request_id)
+    if not screening_call and call_id:
+        screening_call = db.query(models.ScreeningCall).filter(
+            models.ScreeningCall.hunar_call_id == call_id
+        ).first()
+
+    if not screening_call:
+        # Acknowledge anyway (2XX) so Hunar doesn't keep retrying a webhook we can't match.
+        return {"ok": True, "matched": False}
+
+    if event_type == "call_status_updated":
+        screening_call.status = payload.get("status", screening_call.status)
+        screening_call.lifecycle_status = payload.get("lifecycle_status", screening_call.lifecycle_status)
+
+    elif event_type == "call_recording_done":
+        screening_call.recording_url = payload.get("recording_url")
+
+    elif event_type == "call_result_done":
+        screening_call.result = payload.get("result")
+
+    elif event_type == "call_summary":
+        screening_call.status = payload.get("status", screening_call.status)
+        screening_call.lifecycle_status = payload.get("lifecycle_status", screening_call.lifecycle_status)
+        if payload.get("recording_url"):
+            screening_call.recording_url = payload.get("recording_url")
+        if payload.get("result"):
+            screening_call.result = payload.get("result")
+
+    db.commit()
+    return {"ok": True, "matched": True, "event_type": event_type}
