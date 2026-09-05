@@ -59,34 +59,6 @@ def get_job(job_id: str, db: Session = Depends(get_db), user=Depends(get_current
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
-# ---- Candidates ----
-@app.post("/jobs/{job_id}/candidates", response_model=schemas.CandidateOut)
-def create_candidate(job_id: str, candidate: schemas.CandidateCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    if not db.get(models.Job, job_id):
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    phone = normalize_phone(candidate.phone_number)
-    if not phone:
-        raise HTTPException(status_code=422, detail="Invalid phone number format")
-
-    existing = db.query(models.Candidate).filter(
-        models.Candidate.job_id == job_id,
-        models.Candidate.phone_number == phone,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Candidate with this phone number already exists for this job")
-
-    db_candidate = models.Candidate(job_id=job_id, name=candidate.name, phone_number=phone, notes=candidate.notes)
-    db.add(db_candidate)
-    db.commit()
-    db.refresh(db_candidate)
-    return db_candidate
-
-@app.get("/jobs/{job_id}/candidates", response_model=list[schemas.CandidateOut])
-def list_candidates(job_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return db.query(models.Candidate).filter(models.Candidate.job_id == job_id).all()
-
-
 def normalize_phone(raw: str, default_country_code: str = "91") -> str | None:
     """Normalize a phone number to E.164. Assumes India (+91) if no country code present."""
     digits = re.sub(r"[^\d+]", "", raw.strip())
@@ -98,6 +70,56 @@ def normalize_phone(raw: str, default_country_code: str = "91") -> str | None:
         return f"+{digits}"
     return None
 
+# ---- Candidates ----
+@app.post("/jobs/{job_id}/candidates", response_model=schemas.CandidateOut)
+def create_candidate(job_id: str, candidate: schemas.CandidateCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if not db.get(models.Job, job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    phone = normalize_phone(candidate.phone_number)
+    if not phone:
+        raise HTTPException(status_code=422, detail="Invalid phone number format")
+
+    existing_candidates = db.query(models.Candidate).filter(models.Candidate.job_id == job_id).all()
+    for c in existing_candidates:
+        if c.phone_number == phone or normalize_phone(c.phone_number) == phone:
+            raise HTTPException(status_code=409, detail="Candidate with this phone number already exists for this job")
+
+    db_candidate = models.Candidate(job_id=job_id, name=candidate.name, phone_number=phone, notes=candidate.notes)
+    db.add(db_candidate)
+    db.commit()
+    db.refresh(db_candidate)
+    return db_candidate
+
+@app.get("/jobs/{job_id}/candidates", response_model=list[schemas.CandidateOut])
+def list_candidates(job_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return db.query(models.Candidate).filter(models.Candidate.job_id == job_id).order_by(models.Candidate.created_at.asc()).all()
+
+@app.delete("/jobs/{job_id}/candidates/{candidate_id}")
+def delete_candidate(job_id: str, candidate_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    candidate = db.query(models.Candidate).filter(models.Candidate.job_id == job_id, models.Candidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    db.delete(candidate)
+    db.commit()
+    return {"status": "deleted"}
+
+@app.post("/jobs/{job_id}/candidates/deduplicate")
+def deduplicate_candidates(job_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    candidates = db.query(models.Candidate).filter(models.Candidate.job_id == job_id).order_by(models.Candidate.created_at.asc()).all()
+    seen = set()
+    removed = 0
+    for c in candidates:
+        norm = normalize_phone(c.phone_number) or c.phone_number
+        if norm in seen:
+            db.delete(c)
+            removed += 1
+        else:
+            seen.add(norm)
+            if norm != c.phone_number:
+                c.phone_number = norm
+    db.commit()
+    return {"removed": removed}
 
 @app.post("/jobs/{job_id}/candidates/bulk-csv")
 async def bulk_upload_candidates(job_id: str, file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -112,10 +134,13 @@ async def bulk_upload_candidates(job_id: str, file: UploadFile = File(...), db: 
 
     reader = csv.DictReader(io.StringIO(content))
 
-    existing = {
-        c.phone_number: c
-        for c in db.query(models.Candidate).filter(models.Candidate.job_id == job_id).all()
-    }
+    candidates = db.query(models.Candidate).filter(models.Candidate.job_id == job_id).all()
+    existing = {}
+    for c in candidates:
+        norm = normalize_phone(c.phone_number)
+        if norm:
+            existing[norm] = c
+        existing[c.phone_number] = c
 
     created, skipped_duplicate, skipped_invalid = 0, 0, 0
 

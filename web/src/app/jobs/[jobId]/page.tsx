@@ -32,14 +32,45 @@ export default function JobDetailPage() {
         if (jobId) loadData();
     }, [jobId]);
 
+    const [addError, setAddError] = useState("");
+
     async function handleAddCandidate(e: React.FormEvent) {
         e.preventDefault();
-        await apiFetch(`/jobs/${jobId}/candidates`, {
-            method: "POST",
-            body: JSON.stringify({ name, phone_number: phone }),
-        });
-        setName(""); setPhone("");
-        loadData();
+        setAddError("");
+        try {
+            await apiFetch(`/jobs/${jobId}/candidates`, {
+                method: "POST",
+                body: JSON.stringify({ name, phone_number: phone }),
+            });
+            setName(""); setPhone("");
+            loadData();
+        } catch (err: any) {
+            setAddError(err.message || "Failed to add candidate");
+        }
+    }
+
+    async function handleDeduplicate() {
+        try {
+            const res = await apiFetch<{ removed: number }>(`/jobs/${jobId}/candidates/deduplicate`, {
+                method: "POST",
+            });
+            alert(`Cleaned up ${res.removed} duplicate candidates.`);
+            loadData();
+        } catch (err: any) {
+            alert(err.message || "Failed to remove duplicates");
+        }
+    }
+
+    async function handleDeleteCandidate(candidateId: string) {
+        if (!confirm("Are you sure you want to delete this candidate?")) return;
+        try {
+            await apiFetch(`/jobs/${jobId}/candidates/${candidateId}`, {
+                method: "DELETE",
+            });
+            loadData();
+        } catch (err: any) {
+            alert(err.message || "Failed to delete candidate");
+        }
     }
 
     async function handleCsvUpload() {
@@ -68,16 +99,19 @@ export default function JobDetailPage() {
             <Card>
                 <CardHeader><CardTitle>Add Candidate</CardTitle></CardHeader>
                 <CardContent>
-                    <form onSubmit={handleAddCandidate} className="flex gap-3 items-end">
-                        <div className="flex-1">
-                            <Label>Name</Label>
-                            <Input value={name} onChange={(e) => setName(e.target.value)} required />
+                    <form onSubmit={handleAddCandidate} className="space-y-3">
+                        <div className="flex gap-3 items-end">
+                            <div className="flex-1">
+                                <Label>Name</Label>
+                                <Input value={name} onChange={(e) => setName(e.target.value)} required />
+                            </div>
+                            <div className="flex-1">
+                                <Label>Phone (E.164, e.g. +91XXXXXXXXXX)</Label>
+                                <Input value={phone} onChange={(e) => setPhone(e.target.value)} required />
+                            </div>
+                            <Button type="submit">Add</Button>
                         </div>
-                        <div className="flex-1">
-                            <Label>Phone (E.164, e.g. +91XXXXXXXXXX)</Label>
-                            <Input value={phone} onChange={(e) => setPhone(e.target.value)} required />
-                        </div>
-                        <Button type="submit">Add</Button>
+                        {addError && <p className="text-sm text-red-500">{addError}</p>}
                     </form>
                 </CardContent>
             </Card>
@@ -93,7 +127,14 @@ export default function JobDetailPage() {
             </Card>
 
             <Card>
-                <CardHeader><CardTitle>Candidates ({candidates.length})</CardTitle></CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle>Candidates ({candidates.length})</CardTitle>
+                    {candidates.length > 1 && (
+                        <Button variant="outline" size="sm" onClick={handleDeduplicate}>
+                            Remove Duplicates
+                        </Button>
+                    )}
+                </CardHeader>
                 <CardContent>
                     <Table>
                         <TableHeader>
@@ -101,6 +142,7 @@ export default function JobDetailPage() {
                                 <TableHead>Name</TableHead>
                                 <TableHead>Phone</TableHead>
                                 <TableHead>Notes</TableHead>
+                                <TableHead className="w-20 text-right">Action</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -109,6 +151,16 @@ export default function JobDetailPage() {
                                     <TableCell>{c.name}</TableCell>
                                     <TableCell>{c.phone_number}</TableCell>
                                     <TableCell>{c.notes ?? "—"}</TableCell>
+                                    <TableCell className="text-right">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                            onClick={() => handleDeleteCandidate(c.id)}
+                                        >
+                                            Delete
+                                        </Button>
+                                    </TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>
