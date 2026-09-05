@@ -53,7 +53,8 @@ export default function JobDetailPage() {
             body: formData,
         });
         const data = await res.json();
-        setCsvStatus(`Imported ${data.created} candidates`);
+        const msg = `Imported ${data.created} new candidate${data.created === 1 ? "" : "s"}${data.skipped_duplicate ? ` (${data.skipped_duplicate} duplicate${data.skipped_duplicate === 1 ? "" : "s"} skipped)` : ""}`;
+        setCsvStatus(msg);
         loadData();
     }
 
