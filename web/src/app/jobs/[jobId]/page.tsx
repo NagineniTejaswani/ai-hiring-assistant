@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuthGuard } from "@/lib/useAuthGuard";
-import { apiFetch, getToken } from "@/lib/api";
+import { apiFetch, getToken, API_URL } from "@/lib/api";
 import { Candidate, Job } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +47,7 @@ export default function JobDetailPage() {
         setCsvStatus("Uploading...");
         const formData = new FormData();
         formData.append("file", csvFile);
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/jobs/${jobId}/candidates/bulk-csv`, {
+        const res = await fetch(`${API_URL}/jobs/${jobId}/candidates/bulk-csv`, {
             method: "POST",
             headers: { Authorization: `Bearer ${getToken()}` },
             body: formData,

@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 export function getToken(): string | null {
     if (typeof window === "undefined") return null;
@@ -7,7 +7,8 @@ export function getToken(): string | null {
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
     const token = getToken();
-    const res = await fetch(`${API_URL}${path}`, {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const res = await fetch(`${API_URL}${cleanPath}`, {
         ...options,
         headers: {
             "Content-Type": "application/json",
