@@ -34,7 +34,7 @@ class LoginRequest(BaseModel):
 
 @app.post("/auth/login")
 def login(req: LoginRequest):
-    if req.email != settings.recruiter_email or not verify_password(req.password, settings.recruiter_password_hash):
+    if req.email.strip().lower() != settings.recruiter_email.strip().lower() or not verify_password(req.password, settings.recruiter_password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return {"access_token": create_access_token(req.email)}
 
