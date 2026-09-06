@@ -35,17 +35,23 @@ class CandidateOut(BaseModel):
         from_attributes = True
 
 
+
 class ScreeningCallOut(BaseModel):
     id: str
     candidate_id: str
     job_id: str
-    hunar_call_id: Optional[str]
+    hunar_call_id: Optional[str] = None
     status: str
     lifecycle_status: str
-    result: Optional[dict[str, Any]]
-    recording_url: Optional[str]
+    result: Optional[dict[str, Any]] = None
+    recording_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class ScreeningCallWithCandidateOut(ScreeningCallOut):
+    candidate_name: Optional[str] = None
+    candidate_phone: Optional[str] = None

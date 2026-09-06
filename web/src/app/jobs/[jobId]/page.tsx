@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 import { apiFetch, getToken, API_URL } from "@/lib/api";
-import { Candidate, Job } from "@/lib/types";
+import { Candidate, Job, ScreeningCall } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 export default function JobDetailPage() {
     useAuthGuard();
@@ -20,6 +21,15 @@ export default function JobDetailPage() {
     const [phone, setPhone] = useState("");
     const [csvFile, setCsvFile] = useState<File | null>(null);
     const [csvStatus, setCsvStatus] = useState("");
+    const [screeningLoading, setScreeningLoading] = useState<string | null>(null);
+    const [screeningCalls, setScreeningCalls] = useState<ScreeningCall[]>([]);
+    const [addError, setAddError] = useState("");
+
+
+    async function loadScreeningCalls() {
+        const data = await apiFetch<ScreeningCall[]>(`/jobs/${jobId}/screening-calls`);
+        setScreeningCalls(data);
+    }
 
     async function loadData() {
         const jobData = await apiFetch<Job>(`/jobs/${jobId}`);
@@ -29,10 +39,12 @@ export default function JobDetailPage() {
     }
 
     useEffect(() => {
-        if (jobId) loadData();
+        if (jobId) {
+            loadData();
+            loadScreeningCalls();
+        }
     }, [jobId]);
 
-    const [addError, setAddError] = useState("");
 
     async function handleAddCandidate(e: React.FormEvent) {
         e.preventDefault();
@@ -77,7 +89,41 @@ export default function JobDetailPage() {
         loadData();
     }
 
+    async function handleScreenOne(candidateId: string) {
+        setScreeningLoading(candidateId);
+        try {
+            await apiFetch(`/jobs/${jobId}/candidates/${candidateId}/screen`, { method: "POST" });
+            alert("Screening call triggered. Check results below in a few minutes.");
+            loadScreeningCalls();
+        } catch (err: any) {
+            alert(`Failed to trigger call: ${err.message}`);
+        } finally {
+            setScreeningLoading(null);
+        }
+    }
+
+    async function handleScreenAll() {
+        setScreeningLoading("all");
+        try {
+            const res = await apiFetch<{ message: string; created: number }>(`/jobs/${jobId}/screen-all`, { method: "POST" });
+            alert(res.message);
+            loadScreeningCalls();
+        } catch (err: any) {
+            alert(`Failed to trigger bulk screening: ${err.message}`);
+        } finally {
+            setScreeningLoading(null);
+        }
+    }
+
+    function statusBadgeVariant(lifecycleStatus: string): "default" | "secondary" | "destructive" | "outline" {
+        if (lifecycleStatus === "COMPLETED") return "default";
+        if (lifecycleStatus === "IN_PROGRESS") return "secondary";
+        if (lifecycleStatus === "NOT_CONNECTED" || lifecycleStatus === "FAILED" || lifecycleStatus === "CANCELLED") return "destructive";
+        return "outline";
+    }
+
     if (!job) return <div className="p-8">Loading...</div>;
+
 
     return (
         <div className="p-8 max-w-4xl mx-auto space-y-6">
@@ -115,8 +161,11 @@ export default function JobDetailPage() {
             </Card>
 
             <Card>
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle>Candidates ({candidates.length})</CardTitle>
+                    <Button onClick={handleScreenAll} disabled={screeningLoading === "all" || candidates.length === 0}>
+                        {screeningLoading === "all" ? "Triggering..." : "Screen All"}
+                    </Button>
                 </CardHeader>
                 <CardContent>
                     <Table>
@@ -125,7 +174,7 @@ export default function JobDetailPage() {
                                 <TableHead>Name</TableHead>
                                 <TableHead>Phone</TableHead>
                                 <TableHead>Notes</TableHead>
-                                <TableHead className="w-20 text-right">Action</TableHead>
+                                <TableHead className="text-right">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -134,7 +183,15 @@ export default function JobDetailPage() {
                                     <TableCell>{c.name}</TableCell>
                                     <TableCell>{c.phone_number}</TableCell>
                                     <TableCell>{c.notes ?? "—"}</TableCell>
-                                    <TableCell className="text-right">
+                                    <TableCell className="text-right space-x-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleScreenOne(c.id)}
+                                            disabled={screeningLoading === c.id}
+                                        >
+                                            {screeningLoading === c.id ? "Calling..." : "Screen"}
+                                        </Button>
                                         <Button
                                             variant="ghost"
                                             size="sm"
@@ -150,6 +207,82 @@ export default function JobDetailPage() {
                     </Table>
                 </CardContent>
             </Card>
+            <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle>Screening Results ({screeningCalls.length})</CardTitle>
+                    <Button variant="outline" size="sm" onClick={loadScreeningCalls}>
+                        Refresh
+                    </Button>
+                </CardHeader>
+                <CardContent>
+                    {screeningCalls.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No screening calls yet. Click "Screen" or "Screen All" above to start.</p>
+                    ) : (
+                        <div className="space-y-4">
+                            {screeningCalls.map((sc) => (
+                                <div key={sc.id} className="border rounded-lg p-4 space-y-2">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <p className="font-medium">{sc.candidate_name}</p>
+                                            <p className="text-sm text-muted-foreground">{sc.candidate_phone}</p>
+                                        </div>
+                                        <Badge variant={statusBadgeVariant(sc.lifecycle_status)}>
+                                            {sc.lifecycle_status}
+                                        </Badge>
+                                    </div>
+
+                                    {sc.result && Object.keys(sc.result).length > 0 && (
+                                        <div className="grid grid-cols-2 gap-2 text-sm mt-2">
+                                            {sc.result.interest_level && (
+                                                <p><span className="text-muted-foreground">Interest:</span> {sc.result.interest_level}</p>
+                                            )}
+                                            {sc.result.overall_qualified !== undefined && sc.result.overall_qualified !== "" && (
+                                                <p>
+                                                    <span className="text-muted-foreground">Qualified:</span>{" "}
+                                                    {sc.result.overall_qualified === true ? "Yes" : sc.result.overall_qualified === false ? "No" : "—"}
+                                                </p>
+                                            )}
+                                            {sc.result.availability_to_join && (
+                                                <p><span className="text-muted-foreground">Availability:</span> {sc.result.availability_to_join}</p>
+                                            )}
+                                            {sc.result.current_ctc && (
+                                                <p><span className="text-muted-foreground">Current CTC:</span> {sc.result.current_ctc}</p>
+                                            )}
+                                            {sc.result.expected_ctc && (
+                                                <p><span className="text-muted-foreground">Expected CTC:</span> {sc.result.expected_ctc}</p>
+                                            )}
+                                            {sc.result.relevant_experience_years !== undefined && sc.result.relevant_experience_years !== "" && (
+                                                <p><span className="text-muted-foreground">Experience:</span> {sc.result.relevant_experience_years} yrs</p>
+                                            )}
+                                            {sc.result.key_skills_mentioned && (
+                                                <p className="col-span-2"><span className="text-muted-foreground">Skills:</span> {sc.result.key_skills_mentioned}</p>
+                                            )}
+                                            {sc.result.qualification_summary && (
+                                                <p className="col-span-2"><span className="text-muted-foreground">Summary:</span> {sc.result.qualification_summary}</p>
+                                            )}
+                                            {sc.result.candidate_questions_or_concerns && (
+                                                <p className="col-span-2"><span className="text-muted-foreground">Questions raised:</span> {sc.result.candidate_questions_or_concerns}</p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {sc.recording_url && (
+                                        <audio controls className="w-full mt-2">
+                                            <source src={sc.recording_url} type="audio/wav" />
+                                            Your browser does not support audio playback.
+                                        </audio>
+                                    )}
+
+                                    <p className="text-xs text-muted-foreground pt-1">
+                                        Triggered {new Date(sc.created_at).toLocaleString()} · Last updated {new Date(sc.updated_at).toLocaleString()}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
         </div>
     );
 }

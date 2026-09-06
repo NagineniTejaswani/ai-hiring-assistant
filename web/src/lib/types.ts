@@ -15,3 +15,18 @@ export interface Candidate {
     notes: string | null;
     created_at: string;
 }
+
+export interface ScreeningCall {
+    id: string;
+    candidate_id: string;
+    job_id: string;
+    candidate_name: string;
+    candidate_phone: string;
+    hunar_call_id: string | null;
+    status: string;
+    lifecycle_status: string;
+    result: Record<string, any> | null;
+    recording_url: string | null;
+    created_at: string;
+    updated_at: string;
+}
