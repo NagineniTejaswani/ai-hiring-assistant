@@ -122,6 +122,12 @@ export default function JobDetailPage() {
         return "outline";
     }
 
+    function formatDateTime(dateStr: string) {
+        if (!dateStr) return "—";
+        const utcStr = dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : `${dateStr}Z`;
+        return new Date(utcStr).toLocaleString();
+    }
+
     if (!job) return <div className="p-8">Loading...</div>;
 
 
@@ -274,7 +280,7 @@ export default function JobDetailPage() {
                                     )}
 
                                     <p className="text-xs text-muted-foreground pt-1">
-                                        Triggered {new Date(sc.created_at).toLocaleString()} · Last updated {new Date(sc.updated_at).toLocaleString()}
+                                        Triggered {formatDateTime(sc.created_at)} · Last updated {formatDateTime(sc.updated_at)}
                                     </p>
                                 </div>
                             ))}
