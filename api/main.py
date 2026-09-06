@@ -106,6 +106,8 @@ def delete_candidate(job_id: str, candidate_id: str, db: Session = Depends(get_d
     candidate = db.query(models.Candidate).filter(models.Candidate.job_id == job_id, models.Candidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
+    # Clean up associated screening calls first to prevent FK constraint integrity errors
+    db.query(models.ScreeningCall).filter(models.ScreeningCall.candidate_id == candidate_id).delete()
     db.delete(candidate)
     db.commit()
     return {"status": "deleted"}
@@ -118,6 +120,7 @@ def deduplicate_candidates(job_id: str, db: Session = Depends(get_db), user=Depe
     for c in candidates:
         norm = normalize_phone(c.phone_number) or c.phone_number
         if norm in seen:
+            db.query(models.ScreeningCall).filter(models.ScreeningCall.candidate_id == c.id).delete()
             db.delete(c)
             removed += 1
         else:

@@ -17,7 +17,7 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String, default="active")  # draft/active/closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    candidates: Mapped[list["Candidate"]] = relationship(back_populates="job")
+    candidates: Mapped[list["Candidate"]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
 class Candidate(Base):
@@ -31,7 +31,7 @@ class Candidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     job: Mapped["Job"] = relationship(back_populates="candidates")
-    screening_calls: Mapped[list["ScreeningCall"]] = relationship(back_populates="candidate")
+    screening_calls: Mapped[list["ScreeningCall"]] = relationship(back_populates="candidate", cascade="all, delete-orphan")
 
 
 class ScreeningCall(Base):
