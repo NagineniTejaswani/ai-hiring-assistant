@@ -391,3 +391,13 @@ async def hunar_webhook(request: Request, db: Session = Depends(get_db)):
 
     db.commit()
     return {"ok": True, "matched": True, "event_type": event_type}
+
+
+@app.get("/jobs/{job_id}/screening-calls", response_model=list[schemas.ScreeningCallOut])
+def list_screening_calls(job_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return (
+        db.query(models.ScreeningCall)
+        .filter(models.ScreeningCall.job_id == job_id)
+        .order_by(models.ScreeningCall.created_at.desc())
+        .all()
+    )
